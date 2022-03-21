@@ -1,0 +1,26 @@
+program incTest
+	use cudafor
+	use arraysAdd_m
+	implicit none
+	integer :: n = 1024*1024, i
+	integer, parameter :: tPB = 256
+	integer, allocatable :: a(:), b(:), c(:)
+	integer, allocatable, device :: a_d(:), b_d(:), c_d(:)
+	allocate (a(n),a_d(n), b(n),b_d(n),c(n),c_d(n))
+	a = 2; b = 4; a_d = a; b_d = b
+	
+	call inc<<<ceiling(real(n)/tPB),tPB>>>(a_d, b_d, c_d)
+	c = c_d
+	if (all(c == 6)) write(*,*) 'Test 1 Passed (module)'
+	deallocate (c, c_d)
+	
+	allocate (c(n), c_d(n))
+        !$cuf kernel do  <<<*,*>>>
+	do i = 1, n
+		c_d(i) = a_d(i)+b_d(i)
+	enddo
+	c = c_d
+	if (all(c == 6)) write(*,*) 'Test 2 Passed (cuf kernels)'
+	
+	deallocate (a,a_d,b,b_d,c,c_d)
+end program incTest

@@ -1,0 +1,11 @@
+module arraysAdd_m
+contains
+	attributes(global) subroutine inc(a, b, c)
+		implicit none
+		integer :: a(:), b(:), c(:)
+		integer :: i, n
+		i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+		n = size(a)
+		if (i <= n) c(i) = a(i)+ b(i)
+	end subroutine inc
+end module arraysAdd_m
