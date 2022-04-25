@@ -2,53 +2,76 @@ program barrier
         use cufft
         use cudafor
         implicit none
-        integer, parameter :: N=1024
-        integer :: N_t=99,i,m
-        real(8) :: L=100, T=10
-        real(8) :: sigma_0 = 1, x_0 = 40, k_0 = 20, a, b !начальные параметры пакета
-        real(8) :: dt,dx,x,k, barr
-        complex(8) :: expPotential(N)
+        integer, parameter :: N=1024, N_t=2, pi = 3.141593 !дискретизация по x и t
+        integer :: i,m
+        real(8) :: L=100, T=10 !вся длина и время
+        real(8) :: sigma_0, x_0, k_0, a, b !начальные параметры пакета
+        real(8) :: dt,dx,x, barr
+!        real(8) :: expPotential(N)
         character(20) :: filename
-        complex(8), managed :: waveFunc(N),waveFunc_f(N)
+        real(8) :: k(N)
+        complex(8) :: waveFunc(N)
+        complex(8), device :: waveFunc_dev(N), waveFunc_f_dev(N)
+        real(8), device :: expPotential_dev(N), k_dev(N)
         integer plan, ierr
 
-        dt=T/(N_t-1) !шаги по времени и координате
+        dt=T/N_t !шаги по времени и координате
         dx=L/(N-1)
+        x_0 = 30
+        k_0 = 4  !скорость движения пакета
+        sigma_0 = 1
 
-        a = 1.0/SQRT(2*3.1415*sigma_0)
-        b=1.0/(4.0*sigma_0*sigma_0)
+        a = 1.0/SQRT(2*pi*sigma_0)
+        b= 1.0/(4.0*sigma_0*sigma_0)
 
+        write(filename, '(i5.3).txt') 0
+        open(10,file=filename)
         do i = 1,N
                 x=dx*(i-1)
-                expPotential(i) = EXP(-1.0*dt/2.0*(0.,1.)*barr(x))
-                waveFunc(i) = a*EXP(-b*(x-x_0)*(x-x_0))*EXP((0.,1.)*k_0*(x-x_0)) !начальный волновой пакет
-        enddo       
+!                expPotential_dev(i) = EXP(-1.0*dt/2.0*(0.,1.)*barr(x)) !экспонента с потенциалом
+                waveFunc(i) = a*EXP(-b*(x-x_0)*(x-x_0)+(0.,1.)*k_0*(x-x_0)) !начальный волновой пакет
+                if (i .le. N/2) k(i) = (i-1)*2.0*pi/L
+                if (i .gt. N/2) k(i) = -2.0*pi/L*(i-N-1)
+                write(10,*) abs(waveFunc(i))**2
+        enddo  
+        close(10)
+        k_dev = k
+        waveFunc_dev = waveFunc
+
         do m = 1,N_t
-                write(filename, '(i5.3).txt') m
-                open(10,file=filename) !файл записи для каждой итерации времени
-                do i=1,N
-                        write(10,*) abs(waveFunc(i))**2 !запись модуля предыдущей волновой функции
-                        waveFunc(i) = waveFunc(i)*expPotential(i)
-                enddo
+
                 ierr = cufftPlan1D(plan,N,CUFFT_Z2Z,1)
-                ierr = ierr + cufftExecZ2Z(plan,waveFunc,waveFunc_f,CUFFT_FORWARD)
-                do i=1,N
-                        k=((i-1)-N/2.0)/L
-                        waveFunc_f(i) = waveFunc_f(i)*EXP(-1.0*dt/2.0*(0.,1.)*k*k)
-                enddo
-                ierr = ierr + cufftExecZ2Z(plan,waveFunc_f,waveFunc,CUFFT_INVERSE)
+                ierr = ierr + cufftExecZ2Z(plan,waveFunc_dev,waveFunc_f_dev,CUFFT_FORWARD)
                 ierr = ierr + cudaDeviceSynchronize()
+
+                !$cuf kernel do <<<*,*>>>
                 do i=1,N
-                        waveFunc(i) = waveFunc(i)/N*expPotential(i)
+                        waveFunc_f_dev(i) = waveFunc_f_dev(i)*EXP(-1.0*dt/2.0*(0.,1.)*k_dev(i)*k_dev(i))
                 enddo
+
+                ierr = ierr + cufftExecZ2Z(plan,waveFunc_f_dev,waveFunc_dev,CUFFT_INVERSE)
+                ierr = ierr + cudaDeviceSynchronize()
+
+                !$cuf kernel do <<<*,*>>>
+                do i=1,N
+                        waveFunc_dev(i) = waveFunc_dev(i)/N
+                enddo
+
                 ierr = ierr + cufftDestroy(plan)
+
+                waveFunc = waveFunc_dev
+                write(filename, '(i5.3).txt') m
+                open(10,file=filename) !файл записи для каждой итерации по времени
+                do i=1,N
+                        write(10,*) abs(waveFunc(i))**2 !запись квадрата модуля волновой функции
+                enddo
                 close(10)
         enddo
 end program barrier
 
 real function barr(x)
         real :: x,barr
-        if (x>60) barr=0
-        if (x<60 .or. x==60) barr=0
+        barr = 0
         return
 end function barr
+
